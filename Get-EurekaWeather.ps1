@@ -636,6 +636,11 @@ function DisplayWeatherTable {
     $zoneLabel.Height = 30
     $zoneLabel.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
 
+    $currentWeather = $data | Where-Object {
+        $_.jTime.StartsWith($highlightedTime)
+    } | Select-Object -First 1
+    $zoneLabel.Text = "Zone: $zone | Current Weather: $($currentWeather.jWeather)"
+
     # Function to update the labels
     function Update-Labels {
         $currentTime = Get-Date
@@ -716,12 +721,28 @@ function DisplayWeatherTable {
             $specialLabel.Text = ""
         }
 
-        # Determine the current weather based on the highlighted time (Cyan cell)
-        $currentWeather = $data | Where-Object {
-            $_.jTime.StartsWith($highlightedTime)
-        } | Select-Object -First 1
+        if (([datetime]::ParseExact(($highlightedTime).Replace(" PM", "").Replace(" AM", ""), "HH:mm", $null).AddSeconds(1400)) -lt ($currentTime)) {
+            $highlightedTime = (GetIntervalStart).ToString("HH:mm")
+            $currentWeather = $data | Where-Object {
+                $_.jTime.StartsWith($highlightedTime)
+            } | Select-Object -First 1
+            
+            $zoneLabel.Text = "Zone: $zone | Current Weather: $($currentWeather.jWeather)"
+            # Fetch new JSON data
+            $jsonData = GetWeatherDataJson -zone $zone
+            $data = $jsonData | ConvertFrom-Json
 
-        $zoneLabel.Text = "Zone: $zone | Current Weather: $($currentWeather.jWeather)"
+            # Regroup data into rows
+            $rows = Group-DataIntoRows -data $data
+
+            # Repopulate the DataTable
+            Populate-DataTable -rows $rows
+
+            #Force the DataGridView to refresh
+            $dataGridView.Refresh()
+        }
+        # Determine the current weather based on the highlighted time (Cyan cell)
+
     }
 
     # Timer to update the labels every second
@@ -732,76 +753,6 @@ function DisplayWeatherTable {
     })
     $timer.Start()
 
-    # Function to refresh the table and labels at nextJTime
-    function Refresh-AtNextJTime {
-        $currentTime = Get-Date
-
-        # Find the next jTime
-        $nextJTime = $data | ForEach-Object {
-            $time = [datetime]::ParseExact($_.jTime.Replace(" PM", "").Replace(" AM", ""), "HH:mm", $null)
-            if ($time.TimeOfDay -lt $currentTime.TimeOfDay) {
-                $time = $time.AddDays(1) # Wrap around to the next day
-            }
-            [PSCustomObject]@{
-                Time = $time
-                Weather = $_.jWeather
-            }
-        } | Sort-Object Time | Select-Object -First 1
-
-        if ($nextJTime) {
-            # Calculate the time difference in milliseconds
-            $timeDifferenceMs = ($nextJTime.Time - $currentTime).TotalMilliseconds
-
-            # Ensure only one timer instance exists
-            if ($global:refreshTimer) {
-                $global:refreshTimer.Stop()
-                $global:refreshTimer.Dispose()
-            }
-
-            # Set up a one-time timer to trigger at nextJTime
-            $global:refreshTimer = New-Object System.Windows.Forms.Timer
-            $global:refreshTimer.Interval = [int]$timeDifferenceMs
-            $global:refreshTimer.Add_Tick({
-                # Stop the timer after it triggers once
-                $global:refreshTimer.Stop()
-                $global:refreshTimer.Dispose()
-
-                # Fetch new JSON data
-                $jsonData = GetWeatherDataJson -zone $zone
-                $data = $jsonData | ConvertFrom-Json
-
-                # Regroup data into rows
-                $rows = Group-DataIntoRows -data $data
-
-                # Repopulate the DataTable
-                Populate-DataTable -rows $rows
-
-                # Update the highlighted time
-                $highlightedTime = (GetIntervalStart).ToString("HH:mm")
-
-                # Force the DataGridView to refresh
-                $dataGridView.Refresh()
-
-                # Update the zoneLabel with the current weather
-                $currentWeather = $data | Where-Object {
-                    $_.jTime.StartsWith($highlightedTime)
-                } | Select-Object -First 1
-
-                if ($currentWeather) {
-                    $zoneLabel.Text = "Zone: $zone | Current Weather: $($currentWeather.jWeather)"
-                } else {
-                    $zoneLabel.Text = "Zone: $zone | Current Weather: Unknown"
-                }
-
-                # Schedule the next refresh
-                Refresh-AtNextJTime
-            })
-            $global:refreshTimer.Start()
-        }
-    }
-
-    # Initial call to schedule the first refresh
-    Refresh-AtNextJTime
 
     # Add the labels to the form
     $contentPanel.Controls.Add($zoneLabel)
