@@ -359,22 +359,6 @@ function DisplayWeatherTable {
     $eorzeanTimes = @("00:00 - 07:59", "08:00 - 15:59", "16:00 - 23:59")
 
     # Group data into rows
-    <#$rows = @()
-    $currentRow = @{}
-    foreach ($entry in $data) {
-        $currentRow[$entry.jEorzeanTime] = "$($entry.jTime) - $($entry.jWeather)"
-    
-        # If all Eorzean times are filled, finalize the row
-        if ($currentRow.Count -eq $eorzeanTimes.Count) {
-            $rows += $currentRow
-            $currentRow = @{}
-        }
-    }
-
-    # Add any remaining partial row (if data doesn't fill all columns)
-    if ($currentRow.Count -gt 0) {
-        $rows += $currentRow
-    }#>
     function Group-DataIntoRows {
         param (
             [Parameter(Mandatory = $true)]
@@ -408,17 +392,6 @@ function DisplayWeatherTable {
     }
 
     # Populate the DataTable with rows
-    <#foreach ($row in $rows) {
-        $rowData = @()
-        foreach ($et in $eorzeanTimes) {
-            if ($row.ContainsKey($et)) {
-                $rowData += $row[$et]
-            } else {
-                $rowData += ""
-            }
-        }
-        $dataTable.Rows.Add($rowData) | Out-Null
-    }#>
     function Populate-DataTable {
         param (
             [Parameter(Mandatory = $true)]
@@ -495,7 +468,11 @@ function DisplayWeatherTable {
     $closeButton.Dock = [System.Windows.Forms.DockStyle]::Right
     $closeButton.Width = 40
     $closeButton.Add_Click({
+        if ($timer){
+            $timer.Stop()
+        }
         $form.Close()
+        $global:mainMenuForm.Show()
     })
     $titleBar.Controls.Add($closeButton)
 
@@ -661,9 +638,11 @@ function DisplayWeatherTable {
             $timeDifference = $nextJTime.Time - $currentTime
             $minutes = [math]::Floor($timeDifference.TotalMinutes)
             $seconds = $timeDifference.Seconds
-            $timeLabel.Text = "Current Time: $($currentTime.ToString("HH:mm tt")) | Time until $($nextJTime.Weather): $(("{0:D2}m {1:D2}s" -f [string]$minutes, [string]$seconds))"
+            $titleLabel.Text = "     Eureka Weather Table                                                          $($currentTime.ToString("HH:mm"))LT $(([datetime]::FromFileTime((CalculateEorzeaTime) * 10000000)).ToString("HH:mm"))ET"
+            $timeLabel.Text = "Time until $($nextJTime.Weather): $(("{0:D2}m {1:D2}s" -f [string]$minutes, [string]$seconds))"
         } else {
-            $timeLabel.Text = "Current Time: $($currentTime.ToString("HH:mm tt")) | No upcoming jTime"
+            $titleLabel.Text = "     Eureka Weather Table                                                          $($currentTime.ToString("HH:mm"))LT $(([datetime]::FromFileTime((CalculateEorzeaTime) * 10000000)).ToString("HH:mm"))ET"
+            $timeLabel.Text = "No upcoming weather?"
         }
 
         # Special label logic for Blizzard and Fog (only if $zone -eq "Pagos")
@@ -717,10 +696,92 @@ function DisplayWeatherTable {
             }
 
             $specialLabel.Text = "$blizzardText | $fogText"
-        } else {
+        } 
+        # Special label logic for Blizzard and Heat Waves (only if $zone -eq "Pyros")
+        elseif ($zone -eq "Pyros") {
+            $nextBlizzard = $data | ForEach-Object {
+                if ($_.jWeather -eq "Blizzard") {
+                    $time = [datetime]::ParseExact($_.jTime.Replace(" PM", "").Replace(" AM", ""), "HH:mm", $null)
+                    if ($time.TimeOfDay -lt $currentTime.TimeOfDay) {
+                        $time = $time.AddDays(1) # Wrap around to the next day
+                    }
+                    [PSCustomObject]@{
+                        Time = $time
+                    }
+                }
+            } | Sort-Object Time | Select-Object -First 1
+
+            $nextHeatwave = $data | ForEach-Object {
+                if ($_.jWeather -eq "Heat Waves") {
+                    $time = [datetime]::ParseExact($_.jTime.Replace(" PM", "").Replace(" AM", ""), "HH:mm", $null)
+                    if ($time.TimeOfDay -lt $currentTime.TimeOfDay) {
+                        $time = $time.AddDays(1) # Wrap around to the next day
+                    }
+                    [PSCustomObject]@{
+                        Time = $time
+                    }
+                }
+            } | Sort-Object Time | Select-Object -First 1
+
+            $blizzardText = if ($nextBlizzard) {
+                $blizzardDiff = $nextBlizzard.Time - $currentTime
+                $blizzardMinutes = [math]::Floor($blizzardDiff.TotalMinutes)
+                $blizzardSeconds = $blizzardDiff.Seconds
+                "Blizzard: $(("{0:D2}m {1:D2}s" -f [string]$blizzardMinutes, [string]$blizzardSeconds))"
+                if (($blizzardMinutes -eq 15 -or $blizzardMinutes -eq 10) -and ($blizzardSeconds -eq 0)){
+                    WeatherAlarm
+                }
+            } else {
+                "Blizzard: None"
+            }
+
+            $heatwaveText = if ($nextHeatwave) {
+                $heatwaveDiff = $nextHeatwave.Time - $currentTime
+                $heatwaveMinutes = [math]::Floor($heatwaveDiff.TotalMinutes)
+                $heatwaveSeconds = $heatwaveDiff.Seconds
+                "Heat Waves: $(("{0:D2}m {1:D2}s" -f [string]$heatwaveMinutes, [string]$heatwaveSeconds))"
+                if (($heatwaveMinutes -eq 15 -or $heatwaveMinutes -eq 10) -and ($heatwaveSeconds -eq 0)){
+                    WeatherAlarm
+                }
+            } else {
+                "Heat Waves: None"
+            }
+
+            $specialLabel.Text = "$blizzardText | $heatwaveText"
+        }
+        # Special label logic for Gales (only if $zone -eq "Anemos")
+        elseif ($zone -eq "Anemos") {
+            $nextGales = $data | ForEach-Object {
+                if ($_.jWeather -eq "Gales") {
+                    $time = [datetime]::ParseExact($_.jTime.Replace(" PM", "").Replace(" AM", ""), "HH:mm", $null)
+                    if ($time.TimeOfDay -lt $currentTime.TimeOfDay) {
+                        $time = $time.AddDays(1) # Wrap around to the next day
+                    }
+                    [PSCustomObject]@{
+                        Time = $time
+                    }
+                }
+            } | Sort-Object Time | Select-Object -First 1
+
+            $galesText = if ($nextGales) {
+                $galesDiff = $nextgales.Time - $currentTime
+                $galesMinutes = [math]::Floor($galesDiff.TotalMinutes)
+                $galesSeconds = $galesDiff.Seconds
+                "Gales: $(("{0:D2}m {1:D2}s" -f [string]$galesMinutes, [string]$galesSeconds))"
+                if (($galesMinutes -eq 15 -or $galesMinutes -eq 10) -and ($galesSeconds -eq 0)){
+                    WeatherAlarm
+                }
+            } else {
+                "Gales: None"
+            }
+
+            $specialLabel.Text = "$galesText"
+        }
+        else {
             $specialLabel.Text = ""
         }
 
+        # Update DGV data and zone label when we reach the next weather interval.
         if (([datetime]::ParseExact(($highlightedTime).Replace(" PM", "").Replace(" AM", ""), "HH:mm", $null).AddSeconds(1400)) -lt ($currentTime)) {
             $highlightedTime = (GetIntervalStart).ToString("HH:mm")
             $currentWeather = $data | Where-Object {
@@ -741,8 +802,6 @@ function DisplayWeatherTable {
             #Force the DataGridView to refresh
             $dataGridView.Refresh()
         }
-        # Determine the current weather based on the highlighted time (Cyan cell)
-
     }
 
     # Timer to update the labels every second
@@ -763,4 +822,165 @@ function DisplayWeatherTable {
     $form.ShowDialog()
 }
 
-DisplayWeatherTable -zone Pagos
+function ShowMenu {
+    # Create the form
+    $global:mainMenuForm = New-Object 'System.Windows.Forms.Form'
+    $global:mainMenuForm.Text = "Eureka Weather Menu"
+    $global:mainMenuForm.Size = New-Object System.Drawing.Size(300, 170)
+    $global:mainMenuForm.StartPosition = "CenterScreen"
+    $global:mainMenuForm.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+    $global:mainMenuForm.ShowIcon = $false
+    $global:mainMenuForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+
+    # Create a custom title bar using a Panel
+    $menuTitleBar = New-Object System.Windows.Forms.Panel
+    $menuTitleBar.Dock = [System.Windows.Forms.DockStyle]::Top
+    $menuTitleBar.Height = 30
+    $menuTitleBar.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+
+    # Create a menuPictureBox control
+    $menuPictureBox = New-Object System.Windows.Forms.PictureBox
+    $menuPictureBox.Location = New-Object System.Drawing.Point(3,2)
+    $menuPictureBox.Size = New-Object System.Drawing.Size(28, 28)
+    $menuPictureBox.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom  # Adjust the image size to fit the menuPictureBox
+    
+    # Load the PNG image into the menuPictureBox
+    $menuImagePath = "$PSScriptRoot\assets\orange.png"
+    if (Test-Path $menuImagePath) {
+        $menuPictureBox.Image = [System.Drawing.Image]::FromFile($menuImagePath)
+    } else {
+        Write-Host "Image not found!"
+    }
+    $menuTitleBar.Controls.Add($menuPictureBox)
+
+    # Add a label for the title
+    $menuTitleLabel = New-Object System.Windows.Forms.Label
+    $menuTitleLabel.Text = "      Eureka Weather Menu"
+    $menuTitleLabel.ForeColor = [System.Drawing.Color]::White
+    $menuTitleLabel.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $menuTitleLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+    $menuTitleLabel.Font = New-Object System.Drawing.Font("Arial", 12, [System.Drawing.FontStyle]::Bold)
+    $menuTitleBar.Controls.Add($menuTitleLabel)
+
+    # Add a close button
+    $menuCloseButton = New-Object System.Windows.Forms.Button
+    $menuCloseButton.Text = "X"
+    $menuCloseButton.BackColor = [System.Drawing.Color]::FromArgb(60, 60, 60)
+    $menuCloseButton.ForeColor = [System.Drawing.Color]::White
+    $menuCloseButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $menuCloseButton.FlatAppearance.BorderSize = 0
+    $menuCloseButton.Dock = [System.Windows.Forms.DockStyle]::Right
+    $menuCloseButton.Width = 40
+    $menuCloseButton.Add_Click({
+        $global:mainMenuForm.Close()
+    })
+    $menuTitleBar.Controls.Add($menuCloseButton)
+
+    # Add the custom title bar to the form
+    $global:mainMenuForm.Controls.Add($menuTitleBar)
+
+    # Define global variables for dragging
+    $global:menuDragging = $false
+    $global:menuDragStartPoint = New-Object System.Drawing.Point
+
+    # MouseDown Event: Capture the starting point when the user clicks
+    $menuTitleLabel.Add_MouseDown({
+        param($sender, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+            $global:menuDragging = $true
+            $global:menuDragStartPoint = $e.Location
+        }
+    })
+
+    # MouseMove Event: Move the form if dragging is active
+    $menuTitleLabel.Add_MouseMove({
+        param($sender, $e)
+        if ($global:menuDragging) {
+            $newLocation = $global:mainMenuForm.PointToScreen($e.Location)
+            $global:mainMenuForm.Location = New-Object System.Drawing.Point(($newLocation.X - $global:menuDragStartPoint.X), ($newLocation.Y - $global:menuDragStartPoint.Y))
+        }
+    })
+
+    # MouseUp Event: Stop dragging when the mouse button is released
+    $menuTitleLabel.Add_MouseUp({
+        param($sender, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+            $global:menuDragging = $false
+        }
+    })
+
+    # Create buttons for each zone
+    $anemosButton = New-Object System.Windows.Forms.Button
+    $anemosButton.Text = "Anemos"
+    $anemosButton.BackColor = [System.Drawing.Color]::FromArgb(40, 40, 40)
+    $anemosButton.ForeColor = [System.Drawing.Color]::White
+    $anemosButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $anemosButton.FlatAppearance.BorderSize = 0
+    $anemosButton.Dock = [System.Windows.Forms.DockStyle]::Bottom
+    $anemosButton.Size = New-Object System.Drawing.Size($mainMenuForm.ClientSize.Width, 35)
+    $currentFont = $anemosButton.Font
+    $newFont = New-Object System.Drawing.Font($currentFont.FontFamily, ($currentFont.Size + 3), $currentFont.Style)
+    $anemosButton.Font = $newFont
+    $anemosButton.Add_Click({
+        $global:mainMenuForm.Hide()
+        DisplayWeatherTable -zone "Anemos"
+    })
+
+    $pagosButton = New-Object System.Windows.Forms.Button
+    $pagosButton.Text = "Pagos"
+    $pagosButton.BackColor = [System.Drawing.Color]::FromArgb(40, 40, 40)
+    $pagosButton.ForeColor = [System.Drawing.Color]::White
+    $pagosButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $pagosButton.FlatAppearance.BorderSize = 0
+    $pagosButton.Dock = [System.Windows.Forms.DockStyle]::Bottom
+    $pagosButton.Size = New-Object System.Drawing.Size($mainMenuForm.ClientSize.Width, 35)
+    $currentFont = $pagosButton.Font
+    $newFont = New-Object System.Drawing.Font($currentFont.FontFamily, ($currentFont.Size + 3), $currentFont.Style)
+    $pagosButton.Font = $newFont
+    $pagosButton.Add_Click({
+        $global:mainMenuForm.Hide()
+        DisplayWeatherTable -zone "Pagos"
+    })
+
+    $pyrosButton = New-Object System.Windows.Forms.Button
+    $pyrosButton.Text = "Pyros"
+    $pyrosButton.BackColor = [System.Drawing.Color]::FromArgb(40, 40, 40)
+    $pyrosButton.ForeColor = [System.Drawing.Color]::White
+    $pyrosButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $pyrosButton.FlatAppearance.BorderSize = 0
+    $pyrosButton.Dock = [System.Windows.Forms.DockStyle]::Bottom
+    $pyrosButton.Size = New-Object System.Drawing.Size($mainMenuForm.ClientSize.Width, 35)
+    $currentFont = $pyrosButton.Font
+    $newFont = New-Object System.Drawing.Font($currentFont.FontFamily, ($currentFont.Size + 3), $currentFont.Style)
+    $pyrosButton.Font = $newFont
+    $pyrosButton.Add_Click({
+        $global:mainMenuForm.Hide()
+        DisplayWeatherTable -zone "Pyros"
+    })
+
+    $hydatosButton = New-Object System.Windows.Forms.Button
+    $hydatosButton.Text = "Hydatos"
+    $hydatosButton.BackColor = [System.Drawing.Color]::FromArgb(40, 40, 40)
+    $hydatosButton.ForeColor = [System.Drawing.Color]::White
+    $hydatosButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $hydatosButton.FlatAppearance.BorderSize = 0
+    $hydatosButton.Dock = [System.Windows.Forms.DockStyle]::Bottom
+    $hydatosButton.Size = New-Object System.Drawing.Size($mainMenuForm.ClientSize.Width, 35)
+    $currentFont = $hydatosButton.Font
+    $newFont = New-Object System.Drawing.Font($currentFont.FontFamily, ($currentFont.Size + 3), $currentFont.Style)
+    $hydatosButton.Font = $newFont
+    $hydatosButton.Add_Click({
+        $global:mainMenuForm.Hide()
+        DisplayWeatherTable -zone "Hydatos"
+    })
+
+    # Add buttons to the form
+    $global:mainMenuForm.Controls.Add($anemosButton)
+    $global:mainMenuForm.Controls.Add($pagosButton)
+    $global:mainMenuForm.Controls.Add($pyrosButton)
+    $global:mainMenuForm.Controls.Add($hydatosButton)
+
+    # Show the form
+    $global:mainMenuForm.ShowDialog()
+}
+ShowMenu
